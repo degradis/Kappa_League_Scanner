@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kappa League Attendance Scanner</title>
+
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 520px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 16px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.12);
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 26px;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 20px;
+    }
+
+    #reader {
+      width: 100%;
+      margin: 0 auto 15px auto;
+    }
+
+    button {
+      width: 100%;
+      padding: 16px;
+      margin-top: 10px;
+      border: none;
+      border-radius: 10px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #scanBtn {
+      background: #222;
+      color: white;
+    }
+
+    #stopBtn {
+      background: #777;
+      color: white;
+    }
+
+    #confirmBtn {
+      background: #167c3a;
+      color: white;
+      display: none;
+    }
+
+    #imageBtn {
+      background: #555;
+      color: white;
+    }
+
+    .member-card {
+      display: none;
+      margin-top: 20px;
+      padding: 20px;
+      border-radius: 12px;
+      background: #f1f1f1;
+    }
+
+    .member-name {
+      font-size: 25px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .member-grade {
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    .action {
+      font-size: 22px;
+      font-weight: bold;
+      margin: 10px 0;
+    }
+
+    .status {
+      min-height: 25px;
+      margin-top: 15px;
+      font-weight: bold;
+    }
+
+    .success {
+      color: #167c3a;
+    }
+
+    .error {
+      color: #b00020;
+    }
+
+    .info {
+      color: #444;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>Kappa League Attendance</h1>
+
+  <div class="subtitle">
+    Scan the Leaguer's QR code
+  </div>
+
+  <div id="reader"></div>
+
+  <button id="scanBtn" onclick="startScanner()">
+    📷 SCAN QR CODE
+  </button>
+
+  <button id="stopBtn" onclick="stopScanner()">
+    ⏹ STOP SCANNER
+  </button>
+
+  <button id="imageBtn" onclick="document.getElementById('qrImage').click()">
+    🖼 SCAN QR FROM IMAGE
+  </button>
+
+  <input
+    type="file"
+    id="qrImage"
+    accept="image/*"
+    onchange="scanImage(event)"
+  >
+
+  <div id="memberCard" class="member-card">
+
+    <div id="memberName" class="member-name"></div>
+
+    <div id="memberGrade" class="member-grade"></div>
+
+    <div id="memberAction" class="action"></div>
+
+    <button id="confirmBtn" onclick="confirmAttendance()">
+      CONFIRM
+    </button>
+
+  </div>
+
+  <div id="status" class="status info">
+    Ready to scan.
+  </div>
+
+</div>
+
+
+<script>
+
+const API_URL =
+  "https://script.google.com/macros/s/AKfycbwkFiifaLilzYDWJj54-NmFV884RTwuU6e9RzkrUVPnf1aikg0QJ6iwTEU5_f4EmYMkzw/exec";
+
+let scanner = null;
+let scannerRunning = false;
+
+let currentMemberId = null;
+let currentMemberName = null;
+let currentMemberGrade = null;
+let currentAction = null;
+
+let scanLocked = false;
+
+
+/* =========================
+   STATUS MESSAGE
+========================= */
+
+function setStatus(message, type = "info") {
+
+  const status = document.getElementById("status");
+
+  status.textContent = message;
+
+  status.className = "status " + type;
+}
+
+
+/* =========================
+   START CAMERA
+========================= */
+
+async function startScanner() {
+
+  if (scannerRunning) {
+    return;
+  }
+
+  scanLocked = false;
+
+  setStatus("Starting camera...", "info");
+
+  try {
+
+    scanner = new Html5Qrcode("reader");
+
+    await scanner.start(
+      { facingMode: "environment" },
+
+      {
+        fps: 10,
+        qrbox: {
+          width: 250,
+          height: 250
+        }
+      },
+
+      function(decodedText) {
+
+        handleQRCode(decodedText);
+
+      },
+
+      function(errorMessage) {
+
+        // Ignore normal scanning errors.
+
+      }
+    );
+
+    scannerRunning = true;
+
+    setStatus("Camera ready — point it at the QR code.", "success");
+
+  } catch (error) {
+
+    console.error(error);
+
+    setStatus(
+      "Camera could not start. Make sure camera permission is allowed.",
+      "error"
+    );
+
+  }
+}
+
+
+/* =========================
+   STOP CAMERA
+========================= */
+
+async function stopScanner() {
+
+  if (!scanner || !scannerRunning) {
+    return;
+  }
+
+  try {
+
+    await scanner.stop();
+
+    scanner.clear();
+
+  } catch (error) {
+
+    console.log(error);
+
+  }
+
+  scannerRunning = false;
+
+}
+
+
+/* =========================
+   QR CODE FOUND
+========================= */
+
+async function handleQRCode(decodedText) {
+
+  if (scanLocked) {
+    return;
+  }
+
+  const memberId = decodedText.trim().toUpperCase();
+
+  /*
+    QR codes must contain only:
+    KL-001
+    KL-002
+    etc.
+  */
+
+  if (!/^KL-\d{3}$/.test(memberId)) {
+
+    setStatus(
+      "Invalid Kappa League QR code.",
+      "error"
+    );
+
+    return;
+  }
+
+  scanLocked = true;
+
+  await stopScanner();
+
+  setStatus(
+    "QR code found. Looking up Leaguer...",
+    "info"
+  );
+
+  lookupMember(memberId);
+}
+
+
+/* =========================
+   LOOKUP MEMBER
+========================= */
+
+function lookupMember(memberId) {
+
+  const callbackName =
+    "kappaLookup_" + Date.now();
+
+  window[callbackName] = function(result) {
+
+    try {
+
+      delete window[callbackName];
+
+      if (!result || !result.success) {
+
+        setStatus(
+          result && result.message
+            ? result.message
+            : "Leaguer not found.",
+          "error"
+        );
+
+        scanLocked = false;
+
+        return;
+      }
+
+      currentMemberId = result.memberId;
+      currentMemberName = result.name;
+      currentMemberGrade = result.grade;
+      currentAction = result.nextAction;
+
+      document.getElementById("memberName").textContent =
+        result.name;
+
+      document.getElementById("memberGrade").textContent =
+        "Grade: " + result.grade;
+
+      let actionText = "";
+
+      if (result.nextAction === "CHECK-IN") {
+
+        actionText = "READY TO CHECK IN";
+
+      } else if (result.nextAction === "CHECK-OUT") {
+
+        actionText = "READY TO CHECK OUT";
+
+      } else if (result.nextAction === "COMPLETED") {
+
+        actionText = "ATTENDANCE COMPLETED";
+
+      } else {
+
+        actionText = result.nextAction;
+
+      }
+
+      document.getElementById("memberAction").textContent =
+        actionText;
+
+      const confirmButton =
+        document.getElementById("confirmBtn");
+
+      if (result.nextAction === "CHECK-IN") {
+
+        confirmButton.textContent = "✓ CHECK IN";
+        confirmButton.style.display = "block";
+        confirmButton.disabled = false;
+
+      } else if (result.nextAction === "CHECK-OUT") {
+
+        confirmButton.textContent = "✓ CHECK OUT";
+        confirmButton.style.display = "block";
+        confirmButton.disabled = false;
+
+      } else {
+
+        confirmButton.style.display = "none";
+
+      }
+
+      document.getElementById("memberCard").style.display =
+        "block";
+
+      if (result.nextAction === "COMPLETED") {
+
+        setStatus(
+          result.name + " has already completed attendance today.",
+          "info"
+        );
+
+      } else {
+
+        setStatus(
+          "Please confirm the attendance action.",
+          "info"
+        );
+
+      }
+
+    } catch (error) {
+
+      console.error(error);
+
+      setStatus(
+        "There was a problem reading the member information.",
+        "error"
+      );
+
+    }
+
+  };
+
+  const script = document.createElement("script");
+
+  script.src =
+    API_URL +
+    "?action=lookup" +
+    "&memberId=" +
+    encodeURIComponent(memberId) +
+    "&callback=" +
+    callbackName +
+    "&_=" +
+    Date.now();
+
+  script.onerror = function() {
+
+    delete window[callbackName];
+
+    setStatus(
+      "Unable to connect to the attendance system.",
+      "error"
+    );
+
+    scanLocked = false;
+  };
+
+  document.body.appendChild(script);
+}
+
+
+/* =========================
+   CONFIRM ATTENDANCE
+========================= */
+
+function confirmAttendance() {
+
+  if (!currentMemberId) {
+    return;
+  }
+
+  const button =
+    document.getElementById("confirmBtn");
+
+  button.disabled = true;
+
+  setStatus(
+    "Saving attendance...",
+    "info"
+  );
+
+  const callbackName =
+    "kappaConfirm_" + Date.now();
+
+  window[callbackName] = function(result) {
+
+    try {
+
+      delete window[callbackName];
+
+      if (!result || !result.success) {
+
+        button.disabled = false;
+
+        setStatus(
+          result && result.message
+            ? result.message
+            : "Attendance could not be recorded.",
+          "error"
+        );
+
+        return;
+      }
+
+      let actionText = "";
+
+      if (result.action === "CHECK-IN") {
+        actionText = "CHECKED IN";
+      } else if (result.action === "CHECK-OUT") {
+        actionText = "CHECKED OUT";
+      } else {
+        actionText = result.action;
+      }
+
+      setStatus(
+        "✓ " +
+        result.name +
+        " — " +
+        actionText +
+        (result.status ? " (" + result.status + ")" : ""),
+        "success"
+      );
+
+      document.getElementById("memberAction").textContent =
+        actionText;
+
+      document.getElementById("confirmBtn").style.display =
+        "none";
+
+      setTimeout(function() {
+
+        resetScanner();
+
+      }, 1800);
+
+    } catch (error) {
+
+      console.error(error);
+
+      button.disabled = false;
+
+      setStatus(
+        "There was a problem saving attendance.",
+        "error"
+      );
+
+    }
+
+  };
+
+  const script = document.createElement("script");
+
+  script.src =
+    API_URL +
+    "?action=confirm" +
+    "&memberId=" +
+    encodeURIComponent(currentMemberId) +
+    "&callback=" +
+    callbackName +
+    "&_=" +
+    Date.now();
+
+  script.onerror = function() {
+
+    delete window[callbackName];
+
+    button.disabled = false;
+
+    setStatus(
+      "Unable to connect to the attendance system.",
+      "error"
+    );
+
+  };
+
+  document.body.appendChild(script);
+}
+
+
+/* =========================
+   RESET AFTER ATTENDANCE
+========================= */
+
+function resetScanner() {
+
+  currentMemberId = null;
+  currentMemberName = null;
+  currentMemberGrade = null;
+  currentAction = null;
+
+  document.getElementById("memberCard").style.display =
+    "none";
+
+  document.getElementById("confirmBtn").style.display =
+    "none";
+
+  document.getElementById("confirmBtn").disabled =
+    false;
+
+  scanLocked = false;
+
+  setStatus(
+    "Ready for the next Leaguer.",
+    "success"
+  );
+
+  startScanner();
+}
+
+
+/* =========================
+   SCAN QR FROM IMAGE
+========================= */
+
+async function scanImage(event) {
+
+  const file = event.target.files[0];
+
+  if (!file) {
+    return;
+  }
+
+  setStatus(
+    "Reading QR image...",
+    "info"
+  );
+
+  try {
+
+    const imageScanner =
+      new Html5Qrcode("reader");
+
+    const decodedText =
+      await imageScanner.scanFile(file, true);
+
+    imageScanner.clear();
+
+    handleQRCode(decodedText);
+
+  } catch (error) {
+
+    console.error(error);
+
+    setStatus(
+      "No valid Kappa League QR code was found in that image.",
+      "error"
+    );
+
+    scanLocked = false;
+
+  }
+
+  event.target.value = "";
+}
+
+
+/* =========================
+   INITIAL MESSAGE
+========================= */
+
+setStatus(
+  "Ready to scan.",
+  "info"
+);
+
+</script>
+
+</body>
+</html>
